@@ -3,12 +3,11 @@ commonfields:
   id: EwsPowershell
   version: -1
 configuration:
-- defaultvalue: https://outlook.office365.com
-  display: Exchange Web Services (EWS) URI
-  name: ews_uri
+- display: UPN
+  name: upn
   required: true
   type: 0
-- defaultvalue: https://ps.compliance.protection.outlook.com
+- defaultvalue: https://ps.outlook.com
   display: Search and Compliance URI
   name: compliance_and_search_uri
   required: true
@@ -26,80 +25,6 @@ display: EWS Powershell
 name: EwsPowershell
 script:
   commands:
-  - arguments:
-    - default: false
-      description: Domains to block.
-      isArray: true
-      name: blocked_domains
-      required: false
-      secret: false
-    - default: false
-      description: Senders to block.
-      isArray: true
-      name: blocked_senders
-      required: false
-      secret: false
-    deprecated: false
-    description: Block Domains/senders addresses organization-wide.
-    execution: false
-    name: ews-global-sender-blacklist
-  - arguments:
-    - default: false
-      description: Mail box ID.
-      isArray: false
-      name: maibox_id
-      required: true
-      secret: false
-    deprecated: false
-    description: Get junk rules in account.
-    execution: false
-    name: ews-junk-rules-get
-  - arguments:
-    - default: false
-      description: Mail box ID.
-      isArray: false
-      name: maibox_id
-      required: true
-      secret: false
-    - default: false
-      description: Domains to block. (Comma seprated)
-      isArray: true
-      name: blocked_domains
-      required: false
-      secret: false
-    - default: false
-      description: Senders to block. (Comma seprated)
-      isArray: true
-      name: blocked_senders
-      required: false
-      secret: false
-    - default: false
-      description: Domains to Trust. (Comma seprated)
-      isArray: true
-      name: trusted_domains
-      required: false
-      secret: false
-    - default: false
-      description: Senders to Trust. (Comma seprated)
-      isArray: true
-      name: trusted_senders
-      required: false
-      secret: false
-    deprecated: false
-    description: Set junk rules in account.
-    execution: false
-    name: ews-junk-rules-set
-  - arguments:
-    - default: false
-      description: Message ID.
-      isArray: false
-      name: message_id
-      required: true
-      secret: false
-    deprecated: false
-    description: Get message trace by Message ID.
-    execution: false
-    name: ews-message-trace
   - arguments:
     - default: false
       description: Search name.
@@ -124,7 +49,7 @@ script:
       description: Description.
       isArray: false
       name: description 
-      required: true
+      required: false
       secret: false
     - default: false
       description: Mailboxes to include. (Comma seprated)
@@ -186,6 +111,10 @@ script:
     description: Get compliance search configuration.
     execution: false
     name: ews-compliance-get-search
+  - deprecated: false
+    description: List compliance search configurations.
+    execution: false
+    name: ews-compliance-list-search
   - arguments:
     - default: false
       description: Search name.
@@ -217,13 +146,13 @@ script:
   - deprecated: false
     description: Test login using Oauth2.0.
     execution: false
-    name: ews-test-auth
+    name: ews-test
   - deprecated: false
     description: Print integration context.
     hidden: true
     execution: false
     name: ews-integration-context
-  dockerimage: devdemisto/pwsh-ews:1.0.0.13006
+  dockerimage: demisto/powershell-ubuntu:7.0.3.12001
   isfetch: false
   longRunning: false
   longRunningPort: false

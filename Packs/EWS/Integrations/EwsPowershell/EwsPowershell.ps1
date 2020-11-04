@@ -28,6 +28,23 @@ function UpdateIntegrationContext([OAuth2Client]$client){
     $Demisto.setIntegrationContext($integration_context)    
 }
 
+function CreateNewSession ([string]$uri, [string]$upn, [string]$bearer_token) {
+    $tokenValue = ConvertTo-SecureString "Bearer $bearer_token" -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($upn, $tokenValue) 
+    $uri = "https://eur01b.ps.compliance.protection.outlook.com/powershell-liveid?BasicAuthToOAuthConversion=true;PSVersion=7.0.3"
+    $session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $uri -Credential $credential -Authentication Basic -AllowRedirection
+
+	if (!$session) {
+		throw "Fail - establishing session to $uri"
+	}
+
+	return $session
+}
+
+function CloseSession([System.Management.Automation.Runspaces.PSSession]$session) {
+	Remove-PSSession $session
+}
+
 #### OAUTH2.0 CLIENT - DEVICE FLOW FUNCTIONS #####
 
 <#
@@ -283,10 +300,162 @@ class OAuth2Client {
     }
 }
 
+#### COMPLAIANCE AND SEARCH CLIENT - DEVICE FLOW FUNCTIONS #####
+
+class ComplianceAndSearchClient {
+	[ValidateNotNullOrEmpty()][string]$uri
+	[ValidateNotNullOrEmpty()][string]$upn
+    [ValidateNotNullOrEmpty()][string]$bearer_token
+    [psobject]$session
+    
+    ComplianceAndSearchClient([string]$uri, [string]$upn, [string]$bearer_token) {
+        $this.uri = $uri
+        $this.upn = $upn
+        $this.bearer_token = $bearer_token
+    }
+
+    CreateSession() {
+        $this.session = CreateNewSession $this.uri $this.upn $this.bearer_token
+    }
+
+    CloseSession() {
+        if ($this.session) {
+            Remove-PSSession $this.session
+        }
+    }
+
+	[psobject]NewSearch([string]$search_id, [string]$content_match_query, [string]$description, [string]$exchange_location) {
+		try{
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName New-ComplianceSearch
+            $response = New-ComplianceSearch -Name $search_id -ExchangeLocation $exchange_location
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+
+		return $response
+	}
+	
+	RemoveSearch([string]$search_id) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName Remove-ComplianceSearch
+            Remove-ComplianceSearch -Identity $search_id -Confirm:$false
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+	}
+
+	[array]ListSearch() {
+        try {
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName Get-ComplianceSearch
+            $response = Get-ComplianceSearch
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+
+		return $response
+	}
+
+	[psobject]GetSearch([string]$search_id) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName Get-ComplianceSearch
+            $response = Get-ComplianceSearch -Identity $search_id | Select-Object -Property *
+            return $response
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+
+	}
+	
+	StartSearchAction([string]$search_id) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName Start-ComplianceSearch
+            Start-ComplianceSearch -Identity $search_id
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+	}
+	
+	StopSearchAction([string]$search_id) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+            # Import and Execute command
+            Import-PSSession -Session $this.session -CommandName Stop-ComplianceSearch
+            Stop-ComplianceSearch -Identity $search_id -Confirm:$false
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+	}
+	
+	[array]GetSearchAction([string]$search_id) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+		# Import and Execute command
+		Import-PSSession -Session $this.session -CommandName Get-ComplianceSearchAction
+		$response = Get-ComplianceSearchAction -Identity $search_id
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+
+		return $response
+	}
+	
+	[hashtable]Purge([string]$search_id, [string]$purge_type) {
+        try{
+            # Establish session to remote
+            $this.CreateSession()
+		# Import and Execute command
+		$response = Invoke-Command -Session $this.session -ScriptBlock { New-ComplianceSearchAction -SearchName $searchName -Purge -PurgeType $purge_type -Confirm:$false }
+        }
+        catch {
+            # Close session to remote
+            $this.CloseSession()
+            throw $_.Exception
+        }
+
+		return $response
+	}
+}
 
 
 #### COMMAND FUNCTIONS ####
-
 
 function StartAuthCommand ([Oauth2Client]$client) {
     $raw_response = $client.AuthorizationRequest()
@@ -306,8 +475,10 @@ function CompleteAuthCommand ([Oauth2Client]$client) {
     return $human_readable, $entry_context, $raw_response
 }
 
-function RefreshAuthCommand ([Oauth2Client]$client) {
-    $raw_response = $client.RefreshTokenRequest()
+function TestAuthCommand ([Oauth2Client]$oclient, [ComplianceAndSearchClient]$cs_client) {
+    $cs_client.CreateSession()
+    $cs_client.CloseSession()
+    $raw_response = $oclient.RefreshTokenRequest()
     $human_readable = "**Test ok!**"
     $entry_context = @{}
     
@@ -322,9 +493,74 @@ function IntegrationContextCommand () {
     return $human_readable, $entry_context, $raw_response
 }
 
+function NewSearchCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	$raw_response = $client.NewSearch($kwargs['search_id'], $kwargs['content_match_query'], $kwargs['description'], $kwargs['exchange_location'])
+	$human_readable = ""
+	$entry_context = @{}
+
+	return $human_readable, $entry_context, $raw_response
+}
+
+function RemoveSearchCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	# Remove operation doesn't return output
+	$client.RemoveSearch($kwargs['search_id'])
+	$human_readable = ""
+	$entry_context = @{}
+
+	return $human_readable, $entry_context, @{}
+}
+
+function ListSearchCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+    $raw_response = $client.ListSearch()
+	$human_readable = ""
+	$entry_context = @{}
+
+	return $human_readable, $entry_context, $raw_response
+}
+
+function GetSearchCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	$raw_response = $client.GetSearch($kwargs['search_id'])
+	$human_readable = ""
+	$entry_context = @{}
+
+	return $human_readable, $entry_context, $raw_response
+}
+
+function StartSearchActionCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	# Start operation doesn't return output
+	$client.StartSearchAction($kwargs['search_id'])
+	$human_readable = ""
+	$entry_context = {}
+
+	return $human_readable, $entry_context, {}
+}
+
+function StopSearchActionCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	# Stop operation doesn't return output
+	$client.StopSearchAction($kwargs['search_id'])
+	$human_readable = ""
+	$entry_context = {}
+
+	return $human_readable, $entry_context, {}
+}
+
+function GetSearchActionCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	$raw_response = $client. GetSearchAction($kwargs['search_id']) | Select-Object *
+	$human_readable = ""
+	$entry_context = {}
+
+	return $human_readable, $entry_context, $raw_response
+}
+
+function PurgeCommand([ComplianceAndSearchClient]$client, [hashtable]$kwargs) {
+	$raw_response = $client.CompliancePurge($kwargs['search_id'], $kwargs['purge_type'])
+	$human_readable = ""
+	$entry_context = {}
+
+	return $human_readable, $entry_context, $raw_response
+}
 
 #### INTEGRATION COMMANDS MANAGER ####
-
 
 function Main {
 	[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPositionalParameters", "")]
@@ -334,27 +570,59 @@ function Main {
 	$command = $Demisto.GetCommand()
     $command_arguments = $Demisto.Args()
     $integration_params = $Demisto.Params()
+
 	$Demisto.Debug("Command being called is $Command")
-    # Creating OAuth2Client client
-    $oauth2_client = [OAuth2Client]::CreateClientFromIntegrationContext()
-    $oauth2_client.use_system_proxy = $integration_params.proxy
-    $oauth2_client.verify_certificate = $integration_params.insecure
+
+
 	try {
+        # Creating Compliance and search client
+        $oauth2_client = [OAuth2Client]::CreateClientFromIntegrationContext()
+        $oauth2_client.use_system_proxy = $integration_params.proxy
+        $oauth2_client.verify_certificate = $integration_params.insecure
         # Refreshing tokens if expired
         $oauth2_client.RefreshTokenIfExpired()
+        # Creating Compliance and search client
+        $cs_client = [ComplianceAndSearchClient]::new($integration_params.compliance_and_search_uri, $integration_params.upn, $oauth2_client.access_token)
         switch ($command) {
+            "test-module" {
+				throw "This button isn't functional - Please test integration using !ews-test-auth command"
+			}
             "$global:COMMAND_PREFIX-start-auth" {
                 ($human_readable, $entry_context, $raw_response) = StartAuthCommand $oauth2_client
             }
             "$global:COMMAND_PREFIX-complete-auth" {
                 ($human_readable, $entry_context, $raw_response) = CompleteAuthCommand $oauth2_client
             }
-            "$global:COMMAND_PREFIX-test-auth" {
-                ($human_readable, $entry_context, $raw_response) = RefreshAuthCommand $oauth2_client
+            "$global:COMMAND_PREFIX-test" {
+                ($human_readable, $entry_context, $raw_response) = TestAuthCommand $oauth2_client $cs_client
             }
             "$global:COMMAND_PREFIX-integration-context" {
                 ($human_readable, $entry_context, $raw_response) = IntegrationContextCommand 
             }
+			"$global:COMMAND_PREFIX-compliance-new-search" {
+				($human_readable, $entry_context, $raw_response) = NewSearchCommand $cs_client $Demisto.Args()   
+			}
+			"$global:COMMAND_PREFIX-compliance-remove-search" {
+				($human_readable, $entry_context, $raw_response) = RemoveSearchCommand $cs_client $Demisto.Args() 
+			}
+			"$global:COMMAND_PREFIX-compliance-list-search" {
+				($human_readable, $entry_context, $raw_response) = ListSearchCommand $cs_client $Demisto.Args() 
+			}
+			"$global:COMMAND_PREFIX-compliance-get-search" {
+				($human_readable, $entry_context, $raw_response) = GetSearchCommand $cs_client $Demisto.Args() 
+			}
+			"$global:COMMAND_PREFIX-compliance-start-search-action" {
+				($human_readable, $entry_context, $raw_response) = SearchActionCommand $cs_client $Demisto.Args() 
+			}
+			"$global:COMMAND_PREFIX-compliance-stop-search-action" {
+				($human_readable, $entry_context, $raw_response) = StopSearchActionCommand $cs_client $Demisto.Args() 
+			}
+			"$global:COMMAND_PREFIX-compliance-get-search-action" {
+				($human_readable, $entry_context, $raw_response) = GetSearchActionCommand $cs_client $Demisto.Args()
+			}
+			"$global:COMMAND_PREFIX-compliance-purge" {
+				($human_readable, $entry_context, $raw_response) = PurgeCommand $cs_client $Demisto.Args()
+			}
         }
 
         UpdateIntegrationContext $oauth2_client
@@ -372,7 +640,7 @@ Error: $($_.Exception.Message)")
 Integration: $global:INTEGRATION_NAME
 Command: $command
 Arguments: $($command_arguments | ConvertTo-Json)
-Error: $($_.Exception.Message)" | Out-Null
+Error: $($_.Exception)" | Out-Null
     }
 }
 
